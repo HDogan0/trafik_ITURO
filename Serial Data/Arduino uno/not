@@ -1,0 +1,2 @@
+I have used platformio development platform. It should be installed to open project directly. (the cpp file in the src folder is my arduino code, it works on arduino ide.)
+usb names and baud rates within python files need to get changed to run with arduino uno.

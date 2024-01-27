@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"name": "pyserial_study_session",
+			"path": "."
+		}
+	],
+	"settings": {
+		"ros.distro": "humble"
+	}
+}

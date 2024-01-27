@@ -1,0 +1,1 @@
+To read data normally (without using structs), one can use the scanf function directly. It should be noticed that while proceeding directly with variables, the 'tusb.h' library is useless.
