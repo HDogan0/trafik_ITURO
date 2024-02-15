@@ -72,8 +72,7 @@ Message message;
 //      CLASS DEFINITIONS
 //*****************************************************************
 class Motor{
-    public: 
-    
+    public:     
     Motor(uint8_t pwm_, uint8_t dir1_, uint8_t dir2_){
         pwm = pwm_;
         dir1 = dir1_;
@@ -161,8 +160,6 @@ class Gyro{
 
 class Vehicle{
     public:
-    Gyro gyro;
-
     Vehicle(uint8_t leftPwmPin, uint8_t LD1, uint8_t LD2, uint8_t rightPwmPin, uint8_t RD1, uint8_t RD2): Lmotor(leftPwmPin, LD1, LD2), Rmotor(rightPwmPin, RD1, RD2), gyro(){
         l_duty = 0;
         r_duty = 0;
@@ -209,6 +206,7 @@ class Vehicle{
     }  
 
     private:
+    Gyro gyro;
     Motor Lmotor;
     Motor Rmotor;
     uint8_t l_duty;
