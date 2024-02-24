@@ -41,6 +41,7 @@ void msg_task(void* pvParameters);
 void drv_task(void* pvParameters);
 void gy_task(void* pvParameters);
 SemaphoreHandle_t xMutex;
+SemaphoreHandle_t binSemph;
 //*****************************************************************
 //      FreeRTOS DEFINITIONS
 //*****************************************************************
@@ -72,7 +73,7 @@ Message message;
 //      CLASS DEFINITIONS
 //*****************************************************************
 class Motor{
-    public:     
+    public: 
     Motor(uint8_t pwm_, uint8_t dir1_, uint8_t dir2_){
         pwm = pwm_;
         dir1 = dir1_;
@@ -164,6 +165,8 @@ class Vehicle{
         l_duty = 0;
         r_duty = 0;
         xTaskCreate(gy_task, "GY_TASK", 512, (void*)&gyro, 2, &gy_handler);
+        xSemaphoreTake(binSemph, portMAX_DELAY);    
+        // a binary semaphore should be added because if scheduling starts and this specific task goes on before the argument passes, it may invoke an error.
     }
 
     void power(){
@@ -220,21 +223,23 @@ class Vehicle{
 //*****************************************************************
 //      CLASS DEFINITIONS
 //*****************************************************************
-
 int main() {
     stdio_init_all();
     sleep_ms(100);
 
     xMutex = xSemaphoreCreateMutex();
     while(xMutex == NULL);
-
+    binSemph = xSemaphoreCreateBinary();
+    while(binSemph == NULL);
+    
     xTaskCreate(msg_task, "MSG_TASK", 512, NULL, 1, &msg_handler);
     xTaskCreate(drv_task, "DRV_TASK", 512, NULL, 1, &drv_handler);
     vTaskDelay(pdMS_TO_TICKS(100));
-
+    
     vTaskStartScheduler();
-
+    
     vTaskDelete(NULL);
+    // after creation of tasks, systick gets unnecessary. Deleting systick makes our system more efficient.
 }
 
 void msg_task(void* pvParameters){
@@ -258,6 +263,7 @@ void drv_task(void* pvParameters){
 
 void gy_task(void* pvParameters){
     Gyro* gyro = (Gyro*) pvParameters;
+    xSemaphoreGive(binSemph);
     float elapsed_time;
     uint32_t previous_time = time_us_32(), current_time;
     float gyro_x; 
