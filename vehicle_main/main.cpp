@@ -1,286 +1,197 @@
 #include "pico/stdlib.h"
 #include "stdio.h"
-#include "FreeRTOS.h"
-#include "task.h"
-#include "tusb.h"
-#include "semphr.h"
-#include "hardware/i2c.h"
-#include "hardware/pwm.h"
-#include "pico/binary_info.h"
+#include "hardware/timer.h"
 #include "hardware/gpio.h"
+#include "hardware/pwm.h"
+#include "hardware/irq.h"
+#include "pico/multicore.h"
+#include "tusb.h"
 
-//*****************************************************************
-//      PUBLIC VARIABLE DEFINITIONS
-//*****************************************************************
-uint8_t default_speed = 50;
-float angle_x = 0;
-//*****************************************************************
-//      PUBLIC VARIABLE DEFINITIONS
-//*****************************************************************
-
-//*****************************************************************
-//      PIN DEFINITIONS
-//*****************************************************************
-#define lDir1 1
-#define lDir2 2
-#define lPwm 3
-
-#define rDir1 4
-#define rDir2 5
-#define rPwm 6
-
-//*****************************************************************
-//      PIN DEFINITIONS
-//*****************************************************************
-
-//*****************************************************************
-//      FreeRTOS DEFINITIONS
-//*****************************************************************
-TaskHandle_t msg_handler, drv_handler, gy_handler;
-void msg_task(void* pvParameters);
-void drv_task(void* pvParameters);
-void gy_task(void* pvParameters);
-SemaphoreHandle_t xMutex;
-SemaphoreHandle_t binSemph;
-//*****************************************************************
-//      FreeRTOS DEFINITIONS
-//*****************************************************************
-
-//*****************************************************************
-//      OTHER FUNCTION DEFINITIONS
-//*****************************************************************
-uint abs(float numb);
-uint pwm_setup(uint8_t pin);
-uint32_t pwm_generator(uint slice_num, uint channel, uint freq, uint duty);
-//*****************************************************************
-//      OTHER FUNCTION DEFINITIONS
-//*****************************************************************
-
-//*****************************************************************
-//      TELEMETRY DEFINITIONS
-//*****************************************************************
+// Pin Definitions
+#define LED PICO_DEFAULT_LED_PIN
+#define LencA 2
+#define LencB 3
+#define Ldir1 4
+#define Ldir2 5
+#define Lpwm 6
+#define RencA 13
+#define RencB 14
+#define Rdir1 9
+#define Rdir2 10
+#define Rpwm 11
+//  Message
 typedef struct{
-    int l_motor;
-    int r_motor;
-    int state;
-} Message;
+    float l_speed;
+    float r_speed;
+}Message;
 Message message;
-//*****************************************************************
-//      TELEMETRY DEFINITIONS
-//*****************************************************************
+//  Globals
+volatile uint32_t R_velocity, L_velocity, lcurrTime, lprevTime, rcurrTime, rprevTime;
+uint32_t cTime, pTime, lTime;
+//  Required Functions
+void encoder_callback(uint gpio, uint32_t events);
+float f_abs(float var);
+TU_ATTR_WEAK void tud_cdc_rx_cb(uint8_t itf);
+//  Critical Section Definition
+critical_section_t crit_velocity;
 
 //*****************************************************************
-//      CLASS DEFINITIONS
+//      MOTOR CLASS
 //*****************************************************************
 class Motor{
-    public: 
-    Motor(uint8_t pwm_, uint8_t dir1_, uint8_t dir2_){
-        pwm = pwm_;
-        dir1 = dir1_;
-        dir2 = dir2_;
-        slice_num = pwm_setup();
-        duty_cycle = 0;
+    public:
+    Motor(uint Dir1, uint Dir2, uint Pwm){
+        dir1 = Dir1; dir2 = Dir2; pwm = Pwm;
+        pwm_setup();
     }
 
-    uint pwm_setup(){
+    void motor_control(uint32_t lTime){
+        //  filtering velocity (25hz cutoff frequency-low pass filter)
+        filtRpm = (0.854 * filtRpm) + (0.0728 * rpm) + (0.0728 * preRpm);
+        preRpm = rpm;
+        //  error
+        float err = targetVel - filtRpm;
+        errIntegral = errIntegral + err*lTime/1e6;
+        //  Riemann sum for integral error
+        float u = Kp*err + Ki*errIntegral;
+        float pwr = (int)f_abs(u);
+        //  Power
+        if(pwr > 100){pwr = 100;}
+        if(u < 0){power(pwr, 0);}
+        else{power(pwr, 1);}
+    }
+
+    void power(uint8_t duty, uint8_t dir){
+        float level = (12500 * duty) / 100;
+        pwm_set_chan_level(sliceNum, pwm_gpio_to_channel(pwm), level);
+        if(dir == 1){gpio_put(dir1, 1);gpio_put(dir2, 0);}
+        else{gpio_put(dir1, 0);gpio_put(dir2, 1);}
+    }
+
+    void pwm_setup(){
         gpio_set_function(pwm, GPIO_FUNC_PWM);
-        uint slice_num = pwm_gpio_to_slice_num(pwm);
-        pwm_set_wrap(slice_num, 12500 - 1);
-        pwm_set_enabled(slice_num, true);
-        return slice_num;
+        sliceNum = pwm_gpio_to_slice_num(pwm);
+        pwm_set_wrap(sliceNum, 12500 - 1);
+        pwm_set_enabled(sliceNum, true);
     }
 
-    void drive(uint8_t duty, uint8_t dir){
-        if(dir == 1){ /*forward*/ }
-        else { /*backward*/ }
-        duty_cycle = duty;
-        uint32_t level = (12500 * duty_cycle) / 100;
-        pwm_set_chan_level(slice_num, pwm_gpio_to_channel(pwm), level);
+    float get_rpm(){
+        return filtRpm;
     }
 
-    private:
-    uint8_t pwm;
-    uint8_t dir1;
-    uint8_t dir2;
-    uint slice_num;
-    uint8_t duty_cycle;
-    
-};
-
-class Gyro{
-    public:
-    #define MPU_ADDR 0x68
-    #define PWR_MGMT 0x6B
-    #define GYRO_CNFG 0x1B
-
-    float gyro_cal;
-    int16_t gyro_raw;
-    uint8_t buffer[2], c_buffer[2];
-
-    Gyro(){
-        gyro_setup();
+    void set_rpm(uint32_t velocity){
+        rpm = (velocity * 60 / (16*20));
     }
 
-    void activate_gyro(uint8_t activate){
-        if(activate == 1){vTaskResume(gy_handler);}
-        else if(activate == 0){vTaskSuspend(gy_handler);}
-    }
-
-    void gyro_setup(){
-        i2c_init(i2c_default, 400*1000);
-        gpio_set_function(PICO_DEFAULT_I2C_SDA_PIN, GPIO_FUNC_I2C);
-        gpio_set_function(PICO_DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C);
-        gpio_pull_up(PICO_DEFAULT_I2C_SCL_PIN);
-        gpio_pull_up(PICO_DEFAULT_I2C_SDA_PIN);
-        bi_decl(bi_2pins_with_func(PICO_DEFAULT_I2C_SDA_PIN, PICO_DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C));
-
-        uint8_t PWR_CNFG[] = {PWR_MGMT, 0x00};
-        i2c_write_blocking(i2c_default, MPU_ADDR, PWR_CNFG, 2, false);
-    
-        uint8_t gyro_config[] = {GYRO_CNFG, 0x10}; // Assuming you want ±1000 degrees/sec
-        i2c_write_blocking(i2c_default, MPU_ADDR, gyro_config, sizeof(gyro_config), false);
-
-        gyro_offset();
-
-    }
-
-    void gyro_offset(){
-        for(uint16_t x = 0; x < 2000; x++){
-            c_buffer[0] = 0x43;
-            i2c_write_blocking(i2c_default, MPU_ADDR, c_buffer, 1, true); // true to keep master control of bus
-            i2c_read_blocking(i2c_default, MPU_ADDR, c_buffer, 2, false);   // false finished with bus
-            gyro_raw = (c_buffer[0] << 8 | c_buffer[1]);
-            gyro_cal += gyro_raw;
-            sleep_ms(3); 
-        }
-
-        gyro_cal /= 2000;
+    void set_target(float velocity){
+        targetVel = velocity;
     }
     private:
+    uint dir1;
+    uint dir2;
+    uint pwm;
+    uint sliceNum;
+    float targetVel;
+    float rpm, filtRpm, preRpm, errIntegral;
+    float Kp=3, Ki=13;
 };
-
-class Vehicle{
-    public:
-    Vehicle(uint8_t leftPwmPin, uint8_t LD1, uint8_t LD2, uint8_t rightPwmPin, uint8_t RD1, uint8_t RD2): Lmotor(leftPwmPin, LD1, LD2), Rmotor(rightPwmPin, RD1, RD2), gyro(){
-        l_duty = 0;
-        r_duty = 0;
-        xTaskCreate(gy_task, "GY_TASK", 512, (void*)&gyro, 2, &gy_handler);
-        xSemaphoreTake(binSemph, portMAX_DELAY);    
-        // a binary semaphore should be added because if scheduling starts and this specific task goes on before the argument passes, it may invoke an error.
-    }
-
-    void power(){
-        Lmotor.drive(l_duty, l_dir);
-        Rmotor.drive(r_duty, r_dir);
-    }
-    
-    //  state -> 0
-    void stop(){
-        l_duty = 0;
-        r_duty = 0;
-        l_dir = 1;
-        r_dir = 1;
-        power();
-    }
-    
-    //  state -> 1
-    void moveForward(int Rpwm, int Lpwm){
-        l_duty = default_speed;
-        r_duty = default_speed;
-        l_dir = 1;
-        r_dir = 1;
-        power();
-    }
-
-    //  state -> 2
-    void moveAroundRight(int16_t degree){
-        angle = angle_x;
-        gyro.activate_gyro(1);
-
-        gyro.activate_gyro(0);
-    }
-
-    // state -> 3
-    void moveAroundLeft(){
-        angle = angle_x;
-        gyro.activate_gyro(1);
-
-        gyro.activate_gyro(0);
-    }  
-
-    private:
-    Gyro gyro;
-    Motor Lmotor;
-    Motor Rmotor;
-    uint8_t l_duty;
-    uint8_t r_duty;
-    uint8_t l_dir;
-    uint8_t r_dir;
-    int state;          //
-    int angle;          // angle -> (-180 - 180)
-};
-
 //*****************************************************************
-//      CLASS DEFINITIONS
+//      MOTOR CLASS
 //*****************************************************************
-int main() {
+
+Motor *lMotor;
+Motor *rMotor;
+int main(){
     stdio_init_all();
     sleep_ms(100);
 
-    xMutex = xSemaphoreCreateMutex();
-    while(xMutex == NULL);
-    binSemph = xSemaphoreCreateBinary();
-    while(binSemph == NULL);
+    critical_section_init(&crit_velocity);
+
+    gpio_init(LED);
+    gpio_set_dir(LED, GPIO_OUT);
+
+    gpio_init(Ldir1);
+    gpio_init(Ldir2);
+    gpio_init(Lpwm);
+    gpio_init(LencA);
+    gpio_init(LencB);
+    gpio_init(Rdir1);
+    gpio_init(Rdir2);
+    gpio_init(Rpwm);
+    gpio_init(RencA);
+    gpio_init(RencB);
+
+    gpio_set_dir(Ldir1, GPIO_OUT);
+    gpio_set_dir(Ldir2, GPIO_OUT);
+    gpio_set_dir(Lpwm, GPIO_OUT);
+    gpio_set_dir(LencA, GPIO_IN);
+    gpio_set_dir(LencB, GPIO_IN);     
+    gpio_set_dir(Rdir1, GPIO_OUT);
+    gpio_set_dir(Rdir2, GPIO_OUT);
+    gpio_set_dir(Rpwm, GPIO_OUT);
+    gpio_set_dir(RencA, GPIO_IN);
+    gpio_set_dir(RencB, GPIO_IN);
     
-    xTaskCreate(msg_task, "MSG_TASK", 512, NULL, 1, &msg_handler);
-    xTaskCreate(drv_task, "DRV_TASK", 512, NULL, 1, &drv_handler);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    //  Interrupt Definitions
+    gpio_set_irq_enabled_with_callback(LencA, 0x04, 1, encoder_callback);
+    gpio_set_irq_enabled_with_callback(RencA, 0x04, 1, encoder_callback);
+                                        // 0x04 == GPIO_IRQ_EDGE_RISE
     
-    vTaskStartScheduler();
+    //  usb connection
+    while(!tud_cdc_connected()){sleep_ms(10);}
     
-    vTaskDelete(NULL);
-    // after creation of tasks, systick gets unnecessary. Deleting systick makes our system more efficient.
+    //  motors
+    lMotor = new Motor(Ldir1, Ldir2, Lpwm);
+    rMotor = new Motor(Rdir1, Rdir2, Rpwm);
+
+    while(1){
+        // taking loop time in microseconds
+        pTime = cTime;
+        cTime = time_us_32();   
+        lTime = cTime - pTime;
+
+        //handling velocity in critical section
+        critical_section_enter_blocking(&crit_velocity);
+        lMotor->set_rpm(L_velocity);
+        rMotor->set_rpm(R_velocity);
+        critical_section_exit(&crit_velocity);
+
+        lMotor->motor_control(lTime);
+        rMotor->motor_control(lTime);
+        
+        printf("%f \n", lMotor->get_rpm());
+        sleep_ms(1);
+    }
+    return 0;
 }
 
-void msg_task(void* pvParameters){
-    while(!tud_cdc_connected()){vTaskDelay(pdMS_TO_TICKS(10));}
-    while(1){
-        if(xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE){
-            if(tud_cdc_available()){
-                int bytesRead = tud_cdc_read(&message, sizeof(Message));
-                xSemaphoreGive(xMutex);
-            }
-        }
+//  CALLBACK
+void encoder_callback(uint gpio, uint32_t events){
+    if (gpio == LencA)
+    {
+    int8_t increment = (gpio_get(LencB) ? 1 : -1);
+    lcurrTime = time_us_32();
+    float dTime = ((float)(lcurrTime - lprevTime)/1e6);
+    L_velocity = increment / dTime;
+    lprevTime = lcurrTime;
+    }
+    else
+    {
+    int8_t increment = (gpio_get(RencB) ? 1 : -1);
+    lcurrTime = time_us_32();
+    float dTime = ((float)(lcurrTime - lprevTime)/1e6);
+    L_velocity = increment / dTime;
+    lprevTime = lcurrTime;
     }
 }
 
-void drv_task(void* pvParameters){
-    Vehicle vehicle(lPwm, lDir1, lDir2, rPwm, rDir1, rDir2);
-    while(1){
-        //  motor driver
-    }
+float f_abs(float var){
+    if (var < 0.0){var *= -1;}
+    return var;
 }
 
-void gy_task(void* pvParameters){
-    Gyro* gyro = (Gyro*) pvParameters;
-    xSemaphoreGive(binSemph);
-    float elapsed_time;
-    uint32_t previous_time = time_us_32(), current_time;
-    float gyro_x; 
-    while(1){
-        gyro->c_buffer[0] = 0x43;
-        i2c_write_blocking(i2c_default, MPU_ADDR, gyro->c_buffer, 1, true); // true to keep master control of bus
-        i2c_read_blocking(i2c_default, MPU_ADDR, gyro->c_buffer, 2, false);   // false finished with bus
-        gyro->gyro_raw = ((gyro->c_buffer[0] << 8 | gyro->c_buffer[1]));
-        gyro->gyro_raw -= gyro->gyro_cal;
-
-        gyro_x = (gyro->gyro_raw) / 32.8;
-
-        current_time = time_us_32();
-        elapsed_time = (current_time - previous_time) / 1000000.0;
-        previous_time = current_time;
-
-        angle_x += gyro_x * elapsed_time;   
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
+TU_ATTR_WEAK void tud_cdc_rx_cb(uint8_t itf){
+    tud_cdc_read(&message, sizeof(message));
+    lMotor->set_target(message.l_speed);
+    rMotor->set_target(message.r_speed);
 }
