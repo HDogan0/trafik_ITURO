@@ -14,8 +14,8 @@
 #define Ldir1 4
 #define Ldir2 5
 #define Lpwm 6
-#define RencA 13
-#define RencB 14
+#define RencA 12
+#define RencB 13
 #define Rdir1 9
 #define Rdir2 10
 #define Rpwm 11
