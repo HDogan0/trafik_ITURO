@@ -11,13 +11,13 @@
 #define LED PICO_DEFAULT_LED_PIN
 #define LencA 2
 #define LencB 3
-#define Ldir1 4
-#define Ldir2 5
+#define Ldir1 5
+#define Ldir2 4
 #define Lpwm 6
 #define RencA 12
 #define RencB 13
-#define Rdir1 9
-#define Rdir2 10
+#define Rdir1 10
+#define Rdir2 9
 #define Rpwm 11
 //  Message
 typedef struct{
@@ -49,6 +49,7 @@ class Motor{
         //  filtering velocity (25hz cutoff frequency-low pass filter)
         filtRpm = (0.854 * filtRpm) + (0.0728 * rpm) + (0.0728 * preRpm);
         preRpm = rpm;
+        printf("%f\n", filtRpm);
         //  error
         float err = targetVel - filtRpm;
         errIntegral = errIntegral + err*lTime/1e6;
@@ -59,6 +60,8 @@ class Motor{
         if(pwr > 100){pwr = 100;}
         if(u < 0){power(pwr, 0);}
         else{power(pwr, 1);}
+        printf("Target: %f, Actual: %f, Error: %f, Power: %f\n", targetVel, filtRpm, err, errIntegral);
+
     }
 
     void power(uint8_t duty, uint8_t dir){
@@ -79,6 +82,10 @@ class Motor{
         return filtRpm;
     }
 
+    float get_targetVel(){
+        return targetVel;
+    }
+
     void set_rpm(uint32_t velocity){
         rpm = (velocity * 60 / (16*20));
     }
@@ -91,9 +98,9 @@ class Motor{
     uint dir2;
     uint pwm;
     uint sliceNum;
-    float targetVel;
-    float rpm, filtRpm, preRpm, errIntegral;
-    float Kp=3, Ki=13;
+    float targetVel = 50;
+    float rpm, filtRpm, preRpm, errIntegral = 0;
+    float Kp=3, Ki=0;
 };
 //*****************************************************************
 //      MOTOR CLASS
@@ -143,7 +150,7 @@ int main(){
     //  motors
     lMotor = new Motor(Ldir1, Ldir2, Lpwm);
     rMotor = new Motor(Rdir1, Rdir2, Rpwm);
-
+    sleep_ms(10);
     while(1){
         // taking loop time in microseconds
         pTime = cTime;
@@ -159,31 +166,40 @@ int main(){
         lMotor->motor_control(lTime);
         rMotor->motor_control(lTime);
         
-        printf("%f \n", lMotor->get_rpm());
+        // printf("%f ", lMotor->get_targetVel());
+        // printf(" %f\n", rMotor->get_targetVel());
+
+        // printf("\n\n");
+
+        // printf("%f ", lMotor->get_rpm());
+        // printf(" %f \n", rMotor->get_rpm());
+
         sleep_ms(1);
     }
     return 0;
 }
 
-//  CALLBACK
+// Encoder Callback
 void encoder_callback(uint gpio, uint32_t events){
-    if (gpio == LencA)
-    {
-    int8_t increment = (gpio_get(LencB) ? 1 : -1);
-    lcurrTime = time_us_32();
-    float dTime = ((float)(lcurrTime - lprevTime)/1e6);
-    L_velocity = increment / dTime;
-    lprevTime = lcurrTime;
+    if (gpio == LencA) {
+        int8_t increment = (gpio_get(LencB) ? 1 : -1);
+        lcurrTime = time_us_32();
+        float dTime = ((float)(lcurrTime - lprevTime) / 1e6);
+        L_velocity = increment / dTime;
+        lprevTime = lcurrTime;
+        return;
     }
-    else
-    {
-    int8_t increment = (gpio_get(RencB) ? 1 : -1);
-    lcurrTime = time_us_32();
-    float dTime = ((float)(lcurrTime - lprevTime)/1e6);
-    L_velocity = increment / dTime;
-    lprevTime = lcurrTime;
+
+    else if (gpio == RencA) {
+        int8_t increment = (gpio_get(RencB) ? 1 : -1);
+        rcurrTime = time_us_32();
+        float dTime = ((float)(rcurrTime - rprevTime) / 1e6);
+        R_velocity = increment / dTime;  
+        rprevTime = rcurrTime;
+        return;
     }
 }
+
 
 float f_abs(float var){
     if (var < 0.0){var *= -1;}
