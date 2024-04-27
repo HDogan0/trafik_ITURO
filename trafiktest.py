@@ -1,6 +1,5 @@
 import numpy as np
 import cv2
-import matplotlib.pyplot as plt
 
 def correct_perspective(img):
     pts=np.float32([[73,70],[262,70],
@@ -30,6 +29,8 @@ while(True):
         # Display the frame 
         cv2.imshow('mask',mask) 
         contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE) 
+        if len(contours) !=2 :
+            continue
         z=np.zeros(np.shape(mask))
         angs=[]
         pts=[]
