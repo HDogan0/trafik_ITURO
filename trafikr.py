@@ -217,6 +217,7 @@ while True :
     out_img, left_fit, right_fit = fit_polynomial_show_windows(birds_eye)
     cv2.imshow("img",out_img)
     curvature, offset = curvature_and_offset(left_fit, right_fit)
+    #UZUNLUKLAR DOGRU DEGIL
     print('Lane Curvature:{:.2f}m, Offset:{:.2f}m'.format(curvature, offset))
     if cv2.waitKey(1) == ord('q'):
         break
