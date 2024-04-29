@@ -23,10 +23,10 @@ def threshold(img, color):
 
 def correct_perspective(img):
     size = (img.shape[1], img.shape[0])
-    pts = np.float32([[145,317],[510,317],
-                      [70,455],[643,455]])
-    dst = np.float32([[70,250],[643,250],
-                      [70,455],[643,455]])
+    pts = np.float32([[220,375],[460,375],
+                      [105,470],[577,470]])
+    dst = np.float32([[105,150],[577,150],
+                      [105,470],[577,470]])
     mat = cv2.getPerspectiveTransform(pts, dst)
     tr_img = cv2.warpPerspective(img, mat, size)
     return tr_img
@@ -183,10 +183,10 @@ def fit_polynomial_show_windows(binary_warped):
     return out_img, left_fit, right_fit
 
 def curvature_and_offset(left_fit, right_fit):
-    ym_per_pix = 30/720 # meters per pixel in y dimension
-    xm_per_pix = 3.7/700 # meters per pixel in x dimension
+    ym_per_pix = 13.3/100 # cm per pixel in y dimension
+    xm_per_pix = 13.3/308 # cm per pixel in x dimension
     
-    y_eval = 720   # bottom of image
+    y_eval = 485   # bottom of image
     
     # Calculation of R_curve (radius of curvature)
     left_curverad  = ((1 + (2*(left_fit[0]/xm_per_pix)*y_eval*ym_per_pix + left_fit[1])**2)**1.5) / np.absolute(2*(left_fit[0]/xm_per_pix))
@@ -210,19 +210,21 @@ cam.start()
 while True :
     img = cam.capture_array()
     cv2.imshow("img",img)
-    binary_img = threshold(img,"yellow")
-    
+    binary_img = threshold(img,"yellow")    
     birds_eye = correct_perspective(binary_img)
     cv2.imshow("mask",birds_eye)
-    out_img, left_fit, right_fit = fit_polynomial_show_windows(birds_eye)
+    try :
+        out_img, left_fit, right_fit = fit_polynomial_show_windows(birds_eye)
+    except TypeError :
+        continue
     cv2.imshow("img",out_img)
     curvature, offset = curvature_and_offset(left_fit, right_fit)
-    #UZUNLUKLAR DOGRU DEGIL
-    print('Lane Curvature:{:.2f}m, Offset:{:.2f}m'.format(curvature, offset))
+    print('Lane Curvature:{:.2f}cm, Offset:{:.2f}cm'.format(curvature, offset))
     if cv2.waitKey(1) == ord('q'):
         break
 
 cam.stop()
 cv2.destroyAllWindows()
+
 
 
