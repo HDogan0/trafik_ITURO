@@ -20,7 +20,19 @@ def threshold(img, color):
     elif color == "yellow":
         mask = cv2.inRange(hsv, np.array([10,50,165]), np.array([30,255,255]))
     return mask
-
+    
+def find_redlight(img):
+    mask=treshold(img,"red")
+    contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE) 
+    contours=list(contours)
+    for i in contours :
+        if len(i)<20:
+            contours.remove(i)
+    if len(contours)==1 :
+        m=cv2.moments(contours[0])
+        return m["m00"]
+    else :
+        return 0
 def correct_perspective(img):
     size = (img.shape[1], img.shape[0])
     pts = np.float32([[220,375],[460,375],
