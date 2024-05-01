@@ -2,23 +2,57 @@ import numpy as np
 import cv2
 
 def correct_perspective(img):
-    pts=np.float32([[73,70],[262,70],
-                    [50,140],[285,140]])
-    dst=np.float32([[50,20],[285,20],
-                    [50,140],[285,140]])
+    pts=np.float32([[100,300],[500,300],
+                    [10,480],[590,480]])
+    dst=np.float32([[10,200],[590,200],
+                    [10,480],[590,480]])
     mat=cv2.getPerspectiveTransform(pts,dst)
     tr_img=cv2.warpPerspective(img,mat,(350,150))
     return tr_img
     
 def treshold(img,color,) :
     img=cv2.blur(img,(3,3))
-    hsv=cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
+    kernel = np.ones((3, 3), np.uint8)
+    hsv=cv2.cvtColor(img,cv2.COLOR_RGB2HSV)
     if color=="red":
         mask=cv2.inRange(hsv,np.array([110,50,165]),np.array([125,255,255]))
     elif color=="yellow" :
         mask=cv2.inRange(hsv,np.array([10,50,165]),np.array([30,255,255]))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask= cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1) 
     return mask
-    
+def find_lanes(mask):
+    #find contours
+    contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE) 
+    #check number of contours
+    if len(contours)==2:
+        angs=[]
+        pts=[]
+        halfwidths=[]
+        #record angles, centers, widths for every contour
+        for cnt in contours :           
+            blackbox=cv2.minAreaRect(cnt)  
+            (x,y),(w,h),ang = blackbox   
+            if w < h :
+                ang = (ang+90)
+                halfwidths.append(h/2)
+            else:
+                halfwidths.append(w/2)    
+            pts.append((x,y))
+            angs.append(ang)
+        #find target line
+        target1=(((pts[0][0]+pts[1][0])/2,(pts[0][1]+pts[1][1])/2))
+        target0=((target1[0]-sum(halfwidths)/2*np.cos(sum(angs)/2*np.pi/180-np.pi),target1[1]+sum(halfwidths)/2*np.sin(sum(angs)/2*np.pi/180)))
+        #find errors
+        #ang_error=sum(ang)/2-90
+        #dist_error=((target0[0]-np.shape(mask)[0]/2)**2+(target0[1]-np.shape(mask)[1])**2)**0.5
+        return target1,target0
+    elif len(contours)==1 :
+        pass
+    elif len(contours)>2 :
+        pass
+    else :
+        pass
 video = cv2.VideoCapture(0) 
 while(True): 
     ret, img = video.read() 
