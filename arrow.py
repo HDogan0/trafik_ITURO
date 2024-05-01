@@ -23,11 +23,13 @@ def arrow(image):
             #    return 4
             test = np.zeros(image.shape[:2],dtype=np.uint8)
             cv2.circle(test, (x, y), r, 1, -1)
+            if 120 < hell_hsv[y,x][0] and hell_hsv[y,x][0] < 150:
+                return 4
             unmasked_gray = cv2.bitwise_and(unmasked_gray , unmasked_gray, mask=test)
             area = unmasked_gray[int(y-r):int(y+r),int(x-r):int(x+r)]
             #plt.imshow( cv2.cvtColor(area, cv2.COLOR_GRAY2BGR))
     try :
-        maske = cv2.threshold(area, 170, 255, cv2.THRESH_BINARY)
+        maske = cv2.threshold(area, 170, 255, cv2.THRESH_BINARY) 
         
         
     except UnboundLocalError :
@@ -35,7 +37,7 @@ def arrow(image):
     area = cv2.bitwise_and(area,area, mask = maske[1])
     #weight_dict={"x":np.sum(area[:, :area.shape[0]//2]),"y":np.sum(area[:, area.shape[0]//2:]),"z":np.sum(area[:area.shape[1]//2,:]),"t": np.sum(area[area.shape[1]//2:,:])}
     weight_list = [np.sum(area[:, :area.shape[0]//2]),np.sum(area[:, area.shape[0]//2:]),np.sum(area[:area.shape[1]//2,:]), np.sum(area[area.shape[1]//2:,:])]
-    #plt.imshow(area)
+    plt.imshow(area)
     #print(weight_list)
     #x = np.sum(area[:, :area.shape[0]//2])
     #y = np.sum(area[:, area.shape[0]//2:])
